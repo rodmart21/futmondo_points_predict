@@ -1,7 +1,6 @@
 import requests
 import time
 import pandas as pd
-import numpy as np
 import hashlib
 from sqlalchemy import create_engine, text
 from datetime import datetime
