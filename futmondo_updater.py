@@ -1,18 +1,18 @@
 import requests
 import time
 import pandas as pd
-import numpy as np
 import hashlib
 from sqlalchemy import create_engine, text
 from datetime import datetime
 import logging
+from functions.utils import extract_individual_player_features
 
 # Set up logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('futmondo_updater.log'),
+        #logging.FileHandler('futmondo_updater.log'),
         logging.StreamHandler()
     ]
 )
@@ -97,61 +97,125 @@ class FutmondoUpdater:
             logging.warning(f"Could not fetch existing IDs (table might not exist): {e}")
             return set()
     
-    def process_player_data(self, player_data, existing_ids):
-        """Process player data and create training samples"""
-        samples = []
+    def get_existing_player_ids(self):
+        """Get all existing player_ids from players_features table"""
+        try:
+            query = "SELECT player_id FROM players_features"
+            with self.engine.connect() as conn:
+                result = conn.execute(text(query))
+                existing_player_ids = {row[0] for row in result}
+            logging.info(f"Found {len(existing_player_ids)} existing players in features table")
+            return existing_player_ids
+        except Exception as e:
+            logging.warning(f"Could not fetch existing player IDs (table might not exist): {e}")
+            return set()
+    
+    def get_existing_prediction_ids(self):
+        """Get all existing unique_ids from futmondo_predictions table"""
+        try:
+            query = "SELECT unique_id FROM futmondo_predictions"
+            with self.engine.connect() as conn:
+                result = conn.execute(text(query))
+                existing_ids = {row[0] for row in result}
+            logging.info(f"Found {len(existing_ids)} existing prediction records in database")
+            return existing_ids
+        except Exception as e:
+            logging.warning(f"Could not fetch existing prediction IDs (table might not exist): {e}")
+            return set()
+    
+    def process_player_data(self, player_data, existing_ids, existing_prediction_ids):
+        """Process player data and create training samples + prediction sample"""
+        training_samples = []
+        prediction_sample = None
         
         answer = player_data['answer']
         player_info = answer['data']
         historical_matches = answer.get('points', [])
         
-        if len(historical_matches) < 4:
-            return samples
+        if len(historical_matches) < 3:
+            return training_samples, prediction_sample
         
         # Extract price history
         prices = [p['price'] for p in answer['prices']]
         max_price = max(prices)
         min_price = min(prices)
         
-        # Create sliding windows
-        for i in range(len(historical_matches) - 3):
-            match_window = historical_matches[i:i+4]
-            feature_matches = match_window[:3]
-            target_match = match_window[3]
-            
-            round_number = target_match['round']
-            unique_id = self.generate_unique_id(player_info['id'], round_number)
-            
-            # Skip if already exists
-            if unique_id in existing_ids:
-                continue
-            
-            feature_points = [m['points'] for m in feature_matches]
-            last_3_average = sum(feature_points) / 3
-            
-            sample_dict = {
-                'unique_id': unique_id,
-                'player_id': player_info['id'],
-                'name': player_info['name'],
-                'team': player_info['team'],
-                'role': player_info['role'],
-                'round': round_number,
-                'home_average': player_info['average']['homeAverage'],
-                'away_average': player_info['average']['awayAverage'],
-                'overall_average': player_info['average']['average'],
-                'last_3_average': last_3_average,
-                'current_price': player_info['value'],
-                'max_price': max_price,
-                'min_price': min_price,
-                'is_home_target': target_match['isHomeTeam'],
-                'match_minus_1': feature_matches[2]['points'],
-                'match_minus_2': feature_matches[1]['points'],
-                'match_minus_3': feature_matches[0]['points'],
-                'target_points': target_match['points']
-            }
-            samples.append(sample_dict)
+        # Create training samples (sliding windows with target)
+        if len(historical_matches) >= 4:
+            for i in range(len(historical_matches) - 3):
+                match_window = historical_matches[i:i+4]
+                feature_matches = match_window[:3]
+                target_match = match_window[3]
+                
+                round_number = target_match['round']
+                unique_id = self.generate_unique_id(player_info['id'], round_number)
+                
+                # Skip if already exists
+                if unique_id in existing_ids:
+                    continue
+                
+                feature_points = [m['points'] for m in feature_matches]
+                last_3_average = sum(feature_points) / 3
+                
+                sample_dict = {
+                    'unique_id': unique_id,
+                    'player_id': player_info['id'],
+                    'name': player_info['name'],
+                    'team': player_info['team'],
+                    'role': player_info['role'],
+                    'round': round_number,
+                    'home_average': player_info['average']['homeAverage'],
+                    'away_average': player_info['average']['awayAverage'],
+                    'overall_average': player_info['average']['average'],
+                    'last_3_average': last_3_average,
+                    'current_price': player_info['value'],
+                    'max_price': max_price,
+                    'min_price': min_price,
+                    'is_home_target': target_match['isHomeTeam'],
+                    'match_minus_1': feature_matches[2]['points'],
+                    'match_minus_2': feature_matches[1]['points'],
+                    'match_minus_3': feature_matches[0]['points'],
+                    'target_points': target_match['points']
+                }
+                training_samples.append(sample_dict)
         
-        return samples
+        # Create prediction sample for next round (last 3 matches, no target)
+        if len(historical_matches) >= 3:
+            last_3_matches = historical_matches[-3:]
+            
+            # The next round is the last played round + 1
+            next_round = historical_matches[-1]['round'] + 1
+            unique_id = self.generate_unique_id(player_info['id'], next_round)
+            
+            # Skip if already exists in predictions
+            if unique_id not in existing_prediction_ids:
+                feature_points = [m['points'] for m in last_3_matches]
+                last_3_average = sum(feature_points) / 3
+                
+                # We don't know if next match is home or away, so we'll set it to None
+                # You may need to fetch this from a fixtures/schedule API if available
+                prediction_dict = {
+                    'unique_id': unique_id,
+                    'player_id': player_info['id'],
+                    'name': player_info['name'],
+                    'team': player_info['team'],
+                    'role': player_info['role'],
+                    'round': next_round,
+                    'home_average': player_info['average']['homeAverage'],
+                    'away_average': player_info['average']['awayAverage'],
+                    'overall_average': player_info['average']['average'],
+                    'last_3_average': last_3_average,
+                    'current_price': player_info['value'],
+                    'max_price': max_price,
+                    'min_price': min_price,
+                    'is_home_target': None,  # Unknown for next match
+                    'match_minus_1': last_3_matches[2]['points'],
+                    'match_minus_2': last_3_matches[1]['points'],
+                    'match_minus_3': last_3_matches[0]['points']
+                }
+                prediction_sample = prediction_dict
+        
+        return training_samples, prediction_sample
     
     def update_database(self):
         """Main method to fetch data and update database"""
@@ -161,6 +225,8 @@ class FutmondoUpdater:
         
         # Get existing IDs to avoid duplicates
         existing_ids = self.get_existing_ids()
+        existing_player_ids = self.get_existing_player_ids()
+        existing_prediction_ids = self.get_existing_prediction_ids()
         
         # Fetch all players
         all_players = self.get_all_players()
@@ -169,7 +235,10 @@ class FutmondoUpdater:
             return
         
         # Process each player
-        all_samples = []
+        all_training_samples = []
+        all_prediction_samples = []
+        current_features = []
+        
         for i, player in enumerate(all_players):
             player_id = player['id']
             player_name = player['name']
@@ -178,21 +247,58 @@ class FutmondoUpdater:
             
             player_data = self.get_player_details(player_id, player_name)
             if player_data:
-                samples = self.process_player_data(player_data, existing_ids)
-                all_samples.extend(samples)
+                # Process historical data for training + prediction data
+                training_samples, prediction_sample = self.process_player_data(
+                    player_data, existing_ids, existing_prediction_ids
+                )
+                all_training_samples.extend(training_samples)
+                
+                if prediction_sample:
+                    all_prediction_samples.append(prediction_sample)
+                
+                # Extract current features for prediction (only if player doesn't exist)
+                if player_id not in existing_player_ids:
+                    try:
+                        features = extract_individual_player_features(player_data)
+                        current_features.append(features)
+                    except Exception as e:
+                        logging.warning(f"Failed to extract features for {player_name}: {e}")
+                else:
+                    logging.debug(f"Player {player_name} already exists in features table, skipping")
             
             time.sleep(0.5)  # Rate limiting
         
-        # Save new data to database
-        if all_samples:
-            df = pd.DataFrame(all_samples)
-            logging.info(f"Found {len(df)} new records to insert")
-            
-            # Append to existing table (don't replace)
-            df.to_sql('futmondo_points', self.engine, if_exists='append', index=False)
-            logging.info(f"Successfully inserted {len(df)} new records")
+        # Save historical training data to futmondo_points table
+        if all_training_samples:
+            df_historical = pd.DataFrame(all_training_samples)
+            logging.info(f"Found {len(df_historical)} new historical records to insert")
+            df_historical.to_sql('futmondo_points', self.engine, if_exists='append', index=False)
+            logging.info(f"Successfully inserted {len(df_historical)} historical records")
         else:
-            logging.info("No new records to insert")
+            logging.info("No new historical records to insert")
+        
+        # Save prediction data to futmondo_predictions table
+        if all_prediction_samples:
+            df_predictions = pd.DataFrame(all_prediction_samples)
+            logging.info(f"Found {len(df_predictions)} new prediction records to insert")
+            df_predictions.to_sql('futmondo_predictions', self.engine, if_exists='append', index=False)
+            logging.info(f"Successfully inserted {len(df_predictions)} prediction records")
+        else:
+            logging.info("No new prediction records to insert")
+        
+        # Save current player features to players_features table
+        if current_features:
+            df_features = pd.DataFrame(current_features)
+            logging.info(f"Found {len(df_features)} new player features to insert")
+            
+            # Remove duplicates by player_id (keep first occurrence)
+            df_features.drop_duplicates(subset='player_id', inplace=True)
+            
+            # Append new players only (don't replace)
+            df_features.to_sql('players_features', self.engine, if_exists='append', index=False)
+            logging.info(f"Successfully inserted {len(df_features)} new player features")
+        else:
+            logging.info("No new player features to insert")
         
         logging.info("Daily update completed successfully")
         logging.info("=" * 60)
