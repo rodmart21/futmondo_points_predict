@@ -1,4 +1,6 @@
-
+import pandas as pd
+import json
+import hashlib
 
 # Enhanced feature engineering
 def create_advanced_features(df):
@@ -6,29 +8,34 @@ def create_advanced_features(df):
     df_enhanced = df.copy()
     
     # Form indicators
-    df_enhanced['form_trend'] = df_enhanced['last_3_average'] - df_enhanced['overall_average']
+    df_enhanced['form_trend'] = df_enhanced['last_2_average'] - df_enhanced['overall_average']
     df_enhanced['home_away_diff'] = df_enhanced['home_average'] - df_enhanced['away_average']
     
     # Price features
-    df_enhanced['price_vs_max'] = df_enhanced['current_price'] / df_enhanced['max_price']
-    df_enhanced['price_volatility'] = (df_enhanced['max_price'] - df_enhanced['min_price']) / df_enhanced['min_price']
+    df_enhanced['price_per_point'] = df_enhanced['current_price'] / (df_enhanced['overall_average'] + 0.1)
+    df_enhanced['price_efficiency'] = df_enhanced['overall_average'] / df_enhanced['current_price']
     
     # Recent form momentum
     df_enhanced['recent_momentum'] = (
-        df_enhanced['match_minus_1'] * 0.5 + 
-        df_enhanced['match_minus_2'] * 0.3 + 
-        df_enhanced['match_minus_3'] * 0.2
+        df_enhanced['match_minus_1'] * 0.6 + 
+        df_enhanced['match_minus_2'] * 0.4
     )
     
     # Interaction features
     df_enhanced['home_form_interaction'] = (
-        df_enhanced['is_home_target'] * df_enhanced['home_average']
+        df_enhanced['is_home'] * df_enhanced['home_average']
     )
     df_enhanced['away_form_interaction'] = (
-        (1 - df_enhanced['is_home_target']) * df_enhanced['away_average']
+        (1 - df_enhanced['is_home']) * df_enhanced['away_average']
     )
     
-    # Matchup features (if columns exist)
+    # Location-adjusted average (use home avg when home, away avg when away)
+    df_enhanced['location_adjusted_average'] = (
+        df_enhanced['is_home'] * df_enhanced['home_average'] + 
+        (1 - df_enhanced['is_home']) * df_enhanced['away_average']
+    )
+    
+    # Matchup features
     if 'matchup_prob_win' in df_enhanced.columns:
         # Overall matchup strength
         df_enhanced['matchup_strength'] = (
@@ -47,7 +54,7 @@ def create_advanced_features(df):
         df_enhanced['delantero_matchup_bonus'] = 0.0
         df_enhanced.loc[delantero_mask, 'delantero_matchup_bonus'] = (
             df_enhanced.loc[delantero_mask, 'matchup_prob_win'] * 2.0
-        ).fillna(0.0)  # Fill NaN with 0.0
+        ).fillna(0.0)
         
         # Centrocampistas (midfielders) benefit moderately
         centro_mask = df_enhanced['role'].str.contains('centrocampista', case=False, na=False)
@@ -237,3 +244,128 @@ def extract_individual_player_features(json_data):
         'match_minus_4': fitness[-4] if len(fitness) >= 4 else None,
         'match_minus_5': fitness[-5] if len(fitness) >= 5 else None
     }
+
+
+def create_round_features(json_file_path, rounds=[13, 14, 15, 16]):
+    """
+    Load player data from JSON and create rolling features for multiple rounds.
+    
+    Parameters:
+    - json_file_path: Path to the JSON file with player data
+    - rounds: List of rounds to generate features for (default: [13, 14, 15, 16])
+    
+    Returns:
+    - DataFrame with rolling features for all specified rounds
+    """
+    
+    # Helper function to flatten player data
+    def flatten_player_data(player):
+        flat_data = {}
+        excluded_fields = ['userteamId', 'userteam', 'userteamSlug']
+        
+        for key, value in player.items():
+            if key in excluded_fields:
+                continue
+                
+            if key == 'average' and isinstance(value, dict):
+                for avg_key, avg_value in value.items():
+                    flat_data[f'average_{avg_key}'] = avg_value
+            elif key == 'clause' and isinstance(value, dict):
+                for clause_key, clause_value in value.items():
+                    flat_data[f'clause_{clause_key}'] = clause_value
+            else:
+                flat_data[key] = value
+        
+        return flat_data
+    
+    # Load players data
+    with open(json_file_path, 'r', encoding='utf-8') as f:
+        players_data = json.load(f)
+    
+    if not isinstance(players_data, list):
+        players_data = [players_data]
+    
+    # Create DataFrame
+    flattened_players = [flatten_player_data(player) for player in players_data]
+    df = pd.DataFrame(flattened_players)
+    
+    # Keep only needed columns and preserve all original values
+    keep_cols = ['id', 'name', 'slug', 'role', 'points', 'value',
+                 'rating', 'average_average', 'average_homeAverage', 
+                 'average_awayAverage', 'average_averageLastFive', 
+                 'average_matches', 'average_fitness', 'change', 'teamId',
+                 'clause_price', 'clause_suggestedClause']
+    
+    df_clean = df[keep_cols].copy()
+    
+    # Create features for each round
+    all_rounds = []
+    
+    for round_num in rounds:
+        df_round = pd.DataFrame()
+        
+        df_round['player_id'] = df_clean['id']
+        df_round['name'] = df_clean['name']
+        df_round['role'] = df_clean['role']
+        df_round['round'] = round_num
+        df_round['home_average'] = df_clean['average_homeAverage']
+        df_round['away_average'] = df_clean['average_awayAverage']
+        df_round['overall_average'] = df_clean['average_average']
+        df_round['current_price'] = df_clean['value']
+        df_round['matches_played'] = df_clean['average_matches']
+        df_round['rating'] = df_clean['rating']
+        # df_round['change_clause'] = df_clean['change']
+        # df_round['clause_price'] = df_clean['clause_price']
+        df_round['team_id'] = df_clean['teamId']
+        # df_round['value'] = df_clean['value']
+        
+        # Fitness array indices: [round 11, round 12, round 13, round 14, round 15]
+        # For each round, we use 2 previous matches and predict the current round
+        # Round 13: use rounds 12, 11 (fitness[1,0]) → target is round 13 (fitness[2])
+        # Round 14: use rounds 13, 12 (fitness[2,1]) → target is round 14 (fitness[3])
+        # Round 15: use rounds 14, 13 (fitness[3,2]) → target is round 15 (fitness[4])
+        # Round 16: use rounds 15, 14 (fitness[4,3]) → target is unknown
+        
+        round_to_idx = {11: 0, 12: 1, 13: 2, 14: 3, 15: 4}
+        target_idx = round_to_idx.get(round_num, None)
+        
+        if round_num >= 13 and round_num <= 15:
+            # For training rounds, get previous 2 matches
+            idx_minus_1 = round_to_idx.get(round_num - 1, 0)
+            idx_minus_2 = round_to_idx.get(round_num - 2, 0)
+        else:  # round 16
+            # For prediction round, use last 2 available matches
+            idx_minus_1 = 4  # round 15
+            idx_minus_2 = 3  # round 14
+            target_idx = None
+        
+        df_round['match_minus_1'] = df_clean['average_fitness'].apply(
+            lambda x: x[idx_minus_1] if isinstance(x, list) and len(x) > idx_minus_1 else 0
+        )
+        df_round['match_minus_2'] = df_clean['average_fitness'].apply(
+            lambda x: x[idx_minus_2] if isinstance(x, list) and len(x) > idx_minus_2 else 0
+        )
+        
+        # Calculate last_2_average from the 2 previous matches
+        df_round['last_2_average'] = (df_round['match_minus_1'] + df_round['match_minus_2']) / 2
+        
+        # Target points
+        if target_idx is not None:
+            df_round['target_points'] = df_clean['average_fitness'].apply(
+                lambda x: x[target_idx] if isinstance(x, list) and len(x) > target_idx else None
+            )
+        else:
+            df_round['target_points'] = None
+        
+        # Create unique_id
+        df_round['unique_id'] = (df_clean['id'].astype(str) + '_' + 
+                                 str(round_num)).apply(
+            lambda x: hashlib.sha256(x.encode()).hexdigest()
+        )
+        
+        all_rounds.append(df_round)
+    
+    # Combine all rounds
+    df_final = pd.concat(all_rounds, ignore_index=True)
+    
+    return df_final

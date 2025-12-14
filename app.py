@@ -83,7 +83,7 @@ def get_top_players(round_num: int):
     if round_num < 1 or round_num > 38:
         raise HTTPException(
             status_code=400,
-            detail="Round must be between 1 and 38"
+            detail="Round must be between 1 and 16"
         )
     
     # Get all players for the round
