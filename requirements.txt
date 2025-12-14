@@ -3,8 +3,6 @@ pandas
 joblib
 scikit-learn
 numpy
-fastapi
-pydantic
-uvicorn
+psycopg2-binary
 # Add any other packages that training_database.py uses
 # For example, if you use SQLite, MySQL, PostgreSQL, etc.
