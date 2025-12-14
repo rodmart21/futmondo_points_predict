@@ -209,4 +209,5 @@ __marimo__/
 
 # Ignore all JSON files
 *.json
-
+*.csv
+*.png
