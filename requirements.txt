@@ -1,0 +1,10 @@
+streamlit
+pandas
+joblib
+scikit-learn
+numpy
+fastapi
+pydantic
+uvicorn
+# Add any other packages that training_database.py uses
+# For example, if you use SQLite, MySQL, PostgreSQL, etc.
