@@ -1,21 +1,20 @@
-import psycopg2
-from psycopg2.extras import RealDictCursor
-import os
+# In training_database.py
 
 def get_db_connection():
     """
-    Get database connection.
-    Tries Streamlit secrets first, falls back to environment variables.
+    Get database connection using Neon credentials.
     """
     import streamlit as st
-    from psycopg2.extras import RealDictCursor
-    import psycopg2 
+    import psycopg2
+    from psycopg2.extras import RealDictCursor # Assuming this is correctly imported
     
     return psycopg2.connect(
-        host=st.secrets["DATABASE_HOST"], # <-- FIX: Use DATABASE_HOST
-        port=st.secrets["DATABASE_PORT"], # <-- FIX: Use DATABASE_PORT
-        database=st.secrets["DATABASE_NAME"], # <-- FIX: Use DATABASE_NAME
-        user=st.secrets["DATABASE_USER"], # <-- FIX: Use DATABASE_USER
+        host=st.secrets["DATABASE_HOST"],
+        port=st.secrets["DATABASE_PORT"],
+        database=st.secrets["DATABASE_NAME"],
+        user=st.secrets["DATABASE_USER"],
+        password=st.secrets["DATABASE_PASSWORD"], # <--- NEW: Must include the password
+        sslmode='require', # <--- NEW: Required for Neon's secure connection
         cursor_factory=RealDictCursor
     )
     # except:
