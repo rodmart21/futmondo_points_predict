@@ -7,29 +7,29 @@ def get_db_connection():
     Get database connection.
     Tries Streamlit secrets first, falls back to environment variables.
     """
-    try:
-        # Try Streamlit secrets (for deployment)
-        import streamlit as st
-        return psycopg2.connect(
-            host=st.secrets["DB_HOST"],
-            port=st.secrets["DB_PORT"],
-            database=st.secrets["DB_NAME"],
-            user=st.secrets["DB_USER"],
-            password=st.secrets["DB_PASSWORD"],
-            cursor_factory=RealDictCursor
-        )
-    except:
-        # Fall back to .env (for local development)
-        from dotenv import load_dotenv
-        load_dotenv()
-        return psycopg2.connect(
-            host=os.getenv("DB_HOST"),
-            port=os.getenv("DB_PORT"),
-            database=os.getenv("DB_NAME"),
-            user=os.getenv("DB_USER"),
-            password=os.getenv("DB_PASSWORD"),
-            cursor_factory=RealDictCursor
-        )
+    import streamlit as st
+    from psycopg2.extras import RealDictCursor
+    import psycopg2 
+    
+    return psycopg2.connect(
+        host=st.secrets["DATABASE_HOST"], # <-- FIX: Use DATABASE_HOST
+        port=st.secrets["DATABASE_PORT"], # <-- FIX: Use DATABASE_PORT
+        database=st.secrets["DATABASE_NAME"], # <-- FIX: Use DATABASE_NAME
+        user=st.secrets["DATABASE_USER"], # <-- FIX: Use DATABASE_USER
+        cursor_factory=RealDictCursor
+    )
+    # except:
+    #     # Fall back to .env (for local development)
+    #     from dotenv import load_dotenv
+    #     load_dotenv()
+    #     return psycopg2.connect(
+    #         host=os.getenv("DB_HOST"),
+    #         port=os.getenv("DB_PORT"),
+    #         database=os.getenv("DB_NAME"),
+    #         user=os.getenv("DB_USER"),
+    #         password=os.getenv("DB_PASSWORD"),
+    #         cursor_factory=RealDictCursor
+    #     )
 
 def get_player_features(player_name: str, round_number: int):
     """
