@@ -1,22 +1,106 @@
 import streamlit as st
-import requests
 import pandas as pd
-
-API_URL = "http://localhost:8000"
+import joblib
+from training_database import get_player_features, get_all_players_for_round
 
 st.set_page_config(page_title="Fantasy Points Predictor", page_icon="⚽", layout="wide")
 
 st.title("⚽ Fantasy Points Predictor")
 
-# Check API health
-try:
-    health = requests.get(f"{API_URL}/health").json()
-    if health["status"] == "healthy":
-        st.success("✓ API Connected")
+# Load model at startup
+@st.cache_resource
+def load_model():
+    """Load the trained model"""
+    try:
+        model = joblib.load('data/model/fantasy_model_complete.pkl')
+        st.success("✓ Model Loaded Successfully")
+        return model
+    except Exception as e:
+        st.error(f"⚠️ Error loading model: {str(e)}")
+        return None
+
+MODEL = load_model()
+
+def classify_points(points: float) -> str:
+    """Classify predicted points into categories"""
+    if points <= 3:
+        return "low-point-round"
+    elif points <= 6:
+        return "medium-point-round"
     else:
-        st.error("API Unhealthy")
-except:
-    st.error("⚠️ Cannot connect to API. Make sure FastAPI is running on port 8000")
+        return "high-point-round"
+
+def predict_player_points(player_name: str, round_num: int):
+    """Predict fantasy points for a player in a specific round"""
+    if MODEL is None:
+        return None, "Model not loaded"
+    
+    # Get features from database
+    features_dict = get_player_features(player_name, round_num)
+    
+    if not features_dict:
+        return None, f"Player '{player_name}' not found for round {round_num}"
+    
+    # Convert to DataFrame
+    features_df = pd.DataFrame([features_dict])
+    
+    # Ensure correct column order
+    features_df = features_df[MODEL['feature_columns']]
+    
+    # Handle missing values
+    if features_df.isna().any().any():
+        return None, "Missing required features for prediction"
+    
+    # Scale and predict
+    features_scaled = MODEL['scaler'].transform(features_df)
+    prediction = MODEL['model'].predict(features_scaled)[0]
+    
+    return float(prediction), None
+
+def get_top_players_for_round(round_num: int):
+    """Get top 10 predicted players for a specific round"""
+    if MODEL is None:
+        return None, "Model not loaded"
+    
+    if round_num < 1 or round_num > 38:
+        return None, "Round must be between 1 and 38"
+    
+    # Get all players for the round
+    players_data = get_all_players_for_round(round_num)
+    
+    if not players_data:
+        return None, f"No players found for round {round_num}"
+    
+    predictions = []
+    
+    for player_name, features_dict in players_data.items():
+        try:
+            # Convert to DataFrame
+            features_df = pd.DataFrame([features_dict])
+            
+            # Ensure correct column order
+            features_df = features_df[MODEL['feature_columns']]
+            
+            # Skip if missing values
+            if features_df.isna().any().any():
+                continue
+            
+            # Scale and predict
+            features_scaled = MODEL['scaler'].transform(features_df)
+            prediction = MODEL['model'].predict(features_scaled)[0]
+            
+            predictions.append({
+                "player_name": player_name,
+                "predicted_points": float(prediction),
+                "classification": classify_points(prediction)
+            })
+        except Exception:
+            continue
+    
+    # Sort by predicted points and get top 10
+    top_10 = sorted(predictions, key=lambda x: x['predicted_points'], reverse=True)[:10]
+    
+    return top_10, None
 
 st.divider()
 
@@ -40,40 +124,27 @@ with tab1:
             st.warning("Please enter a player name")
         else:
             with st.spinner("Predicting..."):
-                try:
-                    response = requests.post(
-                        f"{API_URL}/predict",
-                        json={"player_name": player_name, "round": round_num}
-                    )
+                points, error = predict_player_points(player_name, round_num)
+                
+                if error:
+                    st.error(f"Error: {error}")
+                else:
+                    classification = classify_points(points)
                     
-                    if response.status_code == 200:
-                        data = response.json()
-                        points = data['predicted_points']
-                        classification = data['classification']
-                        
-                        # Display classification with color coding
-                        if classification == "high-point-round":
-                            st.success(f"### 🔥 HIGH POINT ROUND")
-                            color = "#28a745"
-                        elif classification == "medium-point-round":
-                            st.info(f"### 📊 MEDIUM POINT ROUND")
-                            color = "#ffc107"
-                        else:
-                            st.warning(f"### 📉 LOW POINT ROUND")
-                            color = "#dc3545"
-                        
-                        # Show detailed points in expander
-                        with st.expander("📈 See exact predicted points"):
-                            st.metric(label="Predicted Points", value=f"{points:.2f}")
-                        
-                        # Visual progress bar
-                        st.progress(min(points / 10, 1.0))
-                        
+                    # Display classification with color coding
+                    if classification == "high-point-round":
+                        st.success(f"### 🔥 HIGH POINT ROUND")
+                    elif classification == "medium-point-round":
+                        st.info(f"### 📊 MEDIUM POINT ROUND")
                     else:
-                        error = response.json()
-                        st.error(f"Error: {error['detail']}")
-                except Exception as e:
-                    st.error(f"Request failed: {str(e)}")
+                        st.warning(f"### 📉 LOW POINT ROUND")
+                    
+                    # Show detailed points in expander
+                    with st.expander("📈 See exact predicted points"):
+                        st.metric(label="Predicted Points", value=f"{points:.2f}")
+                    
+                    # Visual progress bar
+                    st.progress(min(points / 10, 1.0))
 
 # TAB 2: Top 10 Players
 with tab2:
@@ -86,24 +157,17 @@ with tab2:
         
         if st.button("Get Top 10", type="primary"):
             with st.spinner("Loading top players..."):
-                try:
-                    response = requests.get(f"{API_URL}/top-players/{top_round}")
-                    
-                    if response.status_code == 200:
-                        data = response.json()
-                        top_players = data['top_players']
-                        
-                        if not top_players:
-                            st.info("No players found for this round")
-                        else:
-                            # Store in session state
-                            st.session_state['top_players'] = top_players
-                            st.session_state['display_round'] = top_round
+                top_players, error = get_top_players_for_round(top_round)
+                
+                if error:
+                    st.error(f"Error: {error}")
+                else:
+                    if not top_players:
+                        st.info("No players found for this round")
                     else:
-                        error = response.json()
-                        st.error(f"Error: {error['detail']}")
-                except Exception as e:
-                    st.error(f"Request failed: {str(e)}")
+                        # Store in session state
+                        st.session_state['top_players'] = top_players
+                        st.session_state['display_round'] = top_round
     
     # Display results
     if 'top_players' in st.session_state:
@@ -118,13 +182,10 @@ with tab2:
                 # Color coding
                 if classification == "high-point-round":
                     emoji = "🔥"
-                    color = "#d4edda"
                 elif classification == "medium-point-round":
                     emoji = "📊"
-                    color = "#fff3cd"
                 else:
                     emoji = "📉"
-                    color = "#f8d7da"
                 
                 # Display player card
                 with st.container():
