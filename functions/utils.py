@@ -2,6 +2,43 @@ import pandas as pd
 import json
 import hashlib
 
+# Team mappings
+TEAM_ID_MAPPING = {
+    '504e581e4d8bec9a670000cf': 'Levante',
+    '520347e4b8d07d930b00000f': 'Girona',
+    '504e581e4d8bec9a670000d9': 'Celta',
+    '504e581e4d8bec9a670000c7': 'Barcelona',
+    '51ffb00e78b20d7f0700003f': 'Oviedo',
+    '504e581e4d8bec9a670000c9': 'Ath Bilbao',
+    '504e581e4d8bec9a670000cb': 'Valencia',
+    '504e581e4d8bec9a670000ca': 'Vallecano',
+    '504e581e4d8bec9a670000c6': 'Real Madrid',
+    '504e581e4d8bec9a670000c8': 'Ath Madrid',
+    '51b890f5b986415a2c000012': 'Villarreal',
+    '504e581e4d8bec9a670000d1': 'Osasuna',
+    '504e581e4d8bec9a670000cd': 'Getafe',
+    '51b889b1e401a15f2c0000f0': 'Elche',
+    '504e581e4d8bec9a670000d0': 'Espanol',
+    '504e581e4d8bec9a670000d5': 'Sevilla',
+    '504e581e4d8bec9a670000ce': 'Sociedad',
+    '504e581e4d8bec9a670000cc': 'Betis',
+    '52038563b8d07d930b00008a': 'Alaves',
+    '504e581e4d8bec9a670000d2': 'Mallorca'
+}
+
+TEAM_NAME_MAPPING = {
+    'Real Sociedad': 'Sociedad',
+    'Atlético Madrid': 'Ath Madrid',
+    'Celta Vigo': 'Celta',
+    'Alavés': 'Alaves',
+    'Rayo Vallecano': 'Vallecano',
+    'Real Betis': 'Betis',
+    'Real Oviedo': 'Oviedo',
+    'Athletic Bilbao': 'Ath Bilbao',
+    'Athletic Club': 'Ath Bilbao',
+    'Espanyol': 'Espanol'
+}
+
 # Enhanced feature engineering
 def create_advanced_features(df):
     """Create additional features for better predictions"""
@@ -158,6 +195,88 @@ def get_team_stats(df):
     
     return stats
 
+
+def standardize_team_names(df, is_historical=True):
+    """Standardize team names and strip whitespace"""
+    df = df.copy()
+    
+    if is_historical:
+        df['HomeTeam'] = df['HomeTeam'].str.strip()
+        df['AwayTeam'] = df['AwayTeam'].str.strip()
+    else:
+        df['Home Team'] = df['Home Team'].str.strip().replace(TEAM_NAME_MAPPING)
+        df['Away Team'] = df['Away Team'].str.strip().replace(TEAM_NAME_MAPPING)
+    
+    return df
+
+
+def predict_upcoming_matches(upcoming_df, historical_df, team_stats):
+    """Create predictions for upcoming matches based on historical team stats"""
+    predictions = []
+    
+    league_avg_home_win = historical_df['Prob_Home_Norm'].mean()
+    league_avg_draw = historical_df['Prob_Draw_Norm'].mean()
+    league_avg_away_win = historical_df['Prob_Away_Norm'].mean()
+    
+    for idx, row in upcoming_df.iterrows():
+        home_team = row['Home Team']
+        away_team = row['Away Team']
+        round_num = row['Round']
+        
+        # Get home team's home performance
+        if home_team in team_stats and 'home_win_prob' in team_stats[home_team]:
+            home_win_strength = team_stats[home_team]['home_win_prob']
+            home_draw_strength = team_stats[home_team]['home_draw_prob']
+        else:
+            home_win_strength = league_avg_home_win
+            home_draw_strength = league_avg_draw
+        
+        # Get away team's away performance
+        if away_team in team_stats and 'away_win_prob' in team_stats[away_team]:
+            away_win_strength = team_stats[away_team]['away_win_prob']
+            away_draw_strength = team_stats[away_team]['away_draw_prob']
+        else:
+            away_win_strength = league_avg_away_win
+            away_draw_strength = league_avg_draw
+        
+        # Calculate probabilities
+        prob_home = (home_win_strength + (1 - away_win_strength)) / 2
+        prob_away = (away_win_strength + (1 - home_win_strength)) / 2
+        prob_draw = (home_draw_strength + away_draw_strength) / 2
+        
+        # Normalize probabilities
+        total = prob_home + prob_draw + prob_away
+        prob_home_norm = prob_home / total
+        prob_draw_norm = prob_draw / total
+        prob_away_norm = prob_away / total
+        
+        # Convert to odds
+        avg_h = 1 / prob_home_norm if prob_home_norm > 0 else 999
+        avg_d = 1 / prob_draw_norm if prob_draw_norm > 0 else 999
+        avg_a = 1 / prob_away_norm if prob_away_norm > 0 else 999
+        
+        predictions.append({
+            'Date': None,
+            'HomeTeam': home_team,
+            'AwayTeam': away_team,
+            'FTHG': None,
+            'FTAG': None,
+            'FTR': None,
+            'AvgH': round(avg_h, 2),
+            'AvgD': round(avg_d, 2),
+            'AvgA': round(avg_a, 2),
+            'Prob_Home': round(prob_home, 6),
+            'Prob_Draw': round(prob_draw, 6),
+            'Prob_Away': round(prob_away, 6),
+            'Total': round(total, 6),
+            'Prob_Home_Norm': round(prob_home_norm, 6),
+            'Prob_Draw_Norm': round(prob_draw_norm, 6),
+            'Prob_Away_Norm': round(prob_away_norm, 6),
+            'Round': round_num
+        })
+    
+    return pd.DataFrame(predictions)
+
 # Function to extract individual player features from JSON data
 def extract_individual_player_features(json_data):
     answer = json_data['answer']
@@ -246,126 +365,118 @@ def extract_individual_player_features(json_data):
     }
 
 
-def create_round_features(json_file_path, rounds=[13, 14, 15, 16]):
+def create_round_features(json_file_path, target_rounds, lookback_window=2):
     """
-    Load player data from JSON and create rolling features for multiple rounds.
+    Create rolling features for specified rounds from player data.
+    
+    The fitness array ALWAYS contains the last 5 completed rounds.
+    fitness = [10, 2, 16, 3, 12] means:
+    - Index 0 = 5 rounds ago
+    - Index 1 = 4 rounds ago  
+    - Index 2 = 3 rounds ago
+    - Index 3 = 2 rounds ago
+    - Index 4 = 1 round ago (most recent)
+    
+    Examples:
+    - For round 18 (next/prediction): match_minus_1=12 (idx 4), match_minus_2=3 (idx 3), target=None
+    - For round 17 (last available): match_minus_1=3 (idx 3), match_minus_2=16 (idx 2), target=12 (idx 4)
+    - For round 16: match_minus_1=16 (idx 2), match_minus_2=2 (idx 1), target=3 (idx 3)
     
     Parameters:
-    - json_file_path: Path to the JSON file with player data
-    - rounds: List of rounds to generate features for (default: [13, 14, 15, 16])
+    - json_file_path: Path to JSON file with player data
+    - target_rounds: List of rounds (e.g., [18] for next round, [14,15,16,17] for training)
+    - lookback_window: Number of previous rounds as features (default: 2)
     
     Returns:
-    - DataFrame with rolling features for all specified rounds
+    - DataFrame with rolling features
     """
     
-    # Helper function to flatten player data
-    def flatten_player_data(player):
-        flat_data = {}
-        excluded_fields = ['userteamId', 'userteam', 'userteamSlug']
-        
-        for key, value in player.items():
-            if key in excluded_fields:
-                continue
-                
-            if key == 'average' and isinstance(value, dict):
-                for avg_key, avg_value in value.items():
-                    flat_data[f'average_{avg_key}'] = avg_value
-            elif key == 'clause' and isinstance(value, dict):
-                for clause_key, clause_value in value.items():
-                    flat_data[f'clause_{clause_key}'] = clause_value
-            else:
-                flat_data[key] = value
-        
-        return flat_data
-    
-    # Load players data
+    # Load and flatten player data
     with open(json_file_path, 'r', encoding='utf-8') as f:
         players_data = json.load(f)
     
     if not isinstance(players_data, list):
         players_data = [players_data]
     
-    # Create DataFrame
-    flattened_players = [flatten_player_data(player) for player in players_data]
-    df = pd.DataFrame(flattened_players)
+    # Flatten nested dictionaries
+    flattened = []
+    for player in players_data:
+        flat = {k: v for k, v in player.items() 
+                if k not in ['userteamId', 'userteam', 'userteamSlug']}
+        
+        if 'average' in player and isinstance(player['average'], dict):
+            for k, v in player['average'].items():
+                flat[f'average_{k}'] = v
+        
+        flattened.append(flat)
     
-    # Keep only needed columns and preserve all original values
-    keep_cols = ['id', 'name', 'slug', 'role', 'points', 'value',
-                 'rating', 'average_average', 'average_homeAverage', 
-                 'average_awayAverage', 'average_averageLastFive', 
-                 'average_matches', 'average_fitness', 'change', 'teamId',
-                 'clause_price', 'clause_suggestedClause']
+    df = pd.DataFrame(flattened)
     
-    df_clean = df[keep_cols].copy()
+    # The fitness array has 5 elements representing the last 5 completed rounds
+    # fitness[4] is always the most recent completed round
+    # We need to know what round number that is
     
-    # Create features for each round
+    # Determine the most recent completed round (fitness[4])
+    # If we're predicting the next round, it's max(target_rounds) - 1
+    # If we're training/analyzing completed rounds, it's max(target_rounds)
+    most_recent_completed = max(target_rounds) - 1
+    
+    # Map fitness array indices to round numbers
+    # fitness[4] = most_recent_completed
+    # fitness[3] = most_recent_completed - 1
+    # fitness[2] = most_recent_completed - 2
+    # fitness[1] = most_recent_completed - 3
+    # fitness[0] = most_recent_completed - 4
+    
     all_rounds = []
     
-    for round_num in rounds:
-        df_round = pd.DataFrame()
+    for target_round in target_rounds:
+        round_df = pd.DataFrame({
+            'player_id': df['id'],
+            'name': df['name'],
+            'role': df['role'],
+            'round': target_round,
+            'team_id': df['teamId'],
+            'home_average': df['average_homeAverage'],
+            'away_average': df['average_awayAverage'],
+            'overall_average': df['average_average'],
+            'current_price': df['value'],
+            'matches_played': df['average_matches'],
+            'rating': df['rating']
+        })
         
-        df_round['player_id'] = df_clean['id']
-        df_round['name'] = df_clean['name']
-        df_round['role'] = df_clean['role']
-        df_round['round'] = round_num
-        df_round['home_average'] = df_clean['average_homeAverage']
-        df_round['away_average'] = df_clean['average_awayAverage']
-        df_round['overall_average'] = df_clean['average_average']
-        df_round['current_price'] = df_clean['value']
-        df_round['matches_played'] = df_clean['average_matches']
-        df_round['rating'] = df_clean['rating']
-        # df_round['change_clause'] = df_clean['change']
-        # df_round['clause_price'] = df_clean['clause_price']
-        df_round['team_id'] = df_clean['teamId']
-        # df_round['value'] = df_clean['value']
+        # Calculate lookback features
+        lookback_values = []
+        for i in range(1, lookback_window + 1):
+            lookback_round = target_round - i
+            # Convert round number to fitness array index
+            # fitness_idx = 4 - (most_recent_completed - lookback_round)
+            fitness_idx = 4 - (most_recent_completed - lookback_round)
+            
+            round_df[f'match_minus_{i}'] = df['average_fitness'].apply(
+                lambda x: x[fitness_idx] if isinstance(x, list) and 0 <= fitness_idx < len(x) else 0
+            )
+            lookback_values.append(round_df[f'match_minus_{i}'])
         
-        # Fitness array indices: [round 11, round 12, round 13, round 14, round 15]
-        # For each round, we use 2 previous matches and predict the current round
-        # Round 13: use rounds 12, 11 (fitness[1,0]) → target is round 13 (fitness[2])
-        # Round 14: use rounds 13, 12 (fitness[2,1]) → target is round 14 (fitness[3])
-        # Round 15: use rounds 14, 13 (fitness[3,2]) → target is round 15 (fitness[4])
-        # Round 16: use rounds 15, 14 (fitness[4,3]) → target is unknown
+        # Calculate average of lookback matches
+        round_df[f'last_{lookback_window}_average'] = pd.concat(lookback_values, axis=1).mean(axis=1)
         
-        round_to_idx = {11: 0, 12: 1, 13: 2, 14: 3, 15: 4}
-        target_idx = round_to_idx.get(round_num, None)
-        
-        if round_num >= 13 and round_num <= 15:
-            # For training rounds, get previous 2 matches
-            idx_minus_1 = round_to_idx.get(round_num - 1, 0)
-            idx_minus_2 = round_to_idx.get(round_num - 2, 0)
-        else:  # round 16
-            # For prediction round, use last 2 available matches
-            idx_minus_1 = 4  # round 15
-            idx_minus_2 = 3  # round 14
-            target_idx = None
-        
-        df_round['match_minus_1'] = df_clean['average_fitness'].apply(
-            lambda x: x[idx_minus_1] if isinstance(x, list) and len(x) > idx_minus_1 else 0
-        )
-        df_round['match_minus_2'] = df_clean['average_fitness'].apply(
-            lambda x: x[idx_minus_2] if isinstance(x, list) and len(x) > idx_minus_2 else 0
-        )
-        
-        # Calculate last_2_average from the 2 previous matches
-        df_round['last_2_average'] = (df_round['match_minus_1'] + df_round['match_minus_2']) / 2
-        
-        # Target points
-        if target_idx is not None:
-            df_round['target_points'] = df_clean['average_fitness'].apply(
-                lambda x: x[target_idx] if isinstance(x, list) and len(x) > target_idx else None
+        # Determine target points
+        # Target is available only if target_round <= most_recent_completed
+        if target_round <= most_recent_completed:
+            target_fitness_idx = 4 - (most_recent_completed - target_round)
+            round_df['target_points'] = df['average_fitness'].apply(
+                lambda x: x[target_fitness_idx] if isinstance(x, list) and 0 <= target_fitness_idx < len(x) else None
             )
         else:
-            df_round['target_points'] = None
+            # Future round - no target available
+            round_df['target_points'] = None
         
-        # Create unique_id
-        df_round['unique_id'] = (df_clean['id'].astype(str) + '_' + 
-                                 str(round_num)).apply(
+        # Create unique identifier
+        round_df['unique_id'] = (df['id'].astype(str) + '_' + str(target_round)).apply(
             lambda x: hashlib.sha256(x.encode()).hexdigest()
         )
         
-        all_rounds.append(df_round)
+        all_rounds.append(round_df)
     
-    # Combine all rounds
-    df_final = pd.concat(all_rounds, ignore_index=True)
-    
-    return df_final
+    return pd.concat(all_rounds, ignore_index=True)

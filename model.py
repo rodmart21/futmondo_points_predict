@@ -29,7 +29,7 @@ logger.info(f"Data shape: {df.shape}")
 
 # Feature columns
 feature_columns = [
-    'home_average', 'away_average', 'overall_average', 'last_3_average', 
+    'home_average', 'away_average', 'rating', 'overall_average', 'last_3_average', 
     'current_price', 'max_price', 'min_price', 'is_home_target', 
     'match_minus_1', 'match_minus_2', 'match_minus_3',
     'matchup_prob_win', 'matchup_prob_draw', 'matchup_prob_loss', 'is_home',
