@@ -7,7 +7,6 @@ st.set_page_config(page_title="Fantasy Points Predictor", page_icon="⚽", layou
 
 st.title("⚽ Fantasy Points Predictor")
 
-# Load model at startup
 @st.cache_resource
 def load_model():
     """Load the trained model"""
@@ -35,37 +34,30 @@ def predict_player_points(player_name: str, round_num: int):
     if MODEL is None:
         return None, "Model not loaded"
     
-    # Get features from database
     features_dict = get_player_features(player_name, round_num)
     
     if not features_dict:
         return None, f"Player '{player_name}' not found for round {round_num}"
     
-    # Convert to DataFrame
     features_df = pd.DataFrame([features_dict])
-    
-    # Ensure correct column order
     features_df = features_df[MODEL['feature_columns']]
     
-    # Handle missing values
     if features_df.isna().any().any():
         return None, "Missing required features for prediction"
     
-    # Scale and predict
     features_scaled = MODEL['scaler'].transform(features_df)
     prediction = MODEL['model'].predict(features_scaled)[0]
     
-    return float(prediction), None
+    return round(float(prediction), 1), None
 
-def get_top_players_for_round(round_num: int):
-    """Get top 10 predicted players for a specific round"""
+def get_best_lineup_by_team(round_num: int):
+    """Get best lineup per team for a specific round"""
     if MODEL is None:
         return None, "Model not loaded"
     
     if round_num < 1 or round_num > 38:
         return None, "Round must be between 1 and 38"
     
-    # Get all players for the round
     players_data = get_all_players_for_round(round_num)
     
     if not players_data:
@@ -75,39 +67,57 @@ def get_top_players_for_round(round_num: int):
     
     for player_name, features_dict in players_data.items():
         try:
-            # Convert to DataFrame
             features_df = pd.DataFrame([features_dict])
-            
-            # Ensure correct column order
             features_df = features_df[MODEL['feature_columns']]
             
-            # Skip if missing values
             if features_df.isna().any().any():
                 continue
             
-            # Scale and predict
             features_scaled = MODEL['scaler'].transform(features_df)
             prediction = MODEL['model'].predict(features_scaled)[0]
             
             predictions.append({
                 "player_name": player_name,
-                "predicted_points": float(prediction),
-                "classification": classify_points(prediction)
+                "team": features_dict.get('team', 'Unknown'),
+                "position": features_dict.get('position', 'Unknown'),
+                "predicted_points": round(float(prediction), 1)
             })
         except Exception:
             continue
     
-    # Sort by predicted points and get top 10
-    top_10 = sorted(predictions, key=lambda x: x['predicted_points'], reverse=True)[:10]
+    df = pd.DataFrame(predictions)
     
-    return top_10, None
+    lineups = {}
+    for team in df['team'].unique():
+        team_players = df[df['team'] == team].sort_values('predicted_points', ascending=False)
+        
+        lineup = {
+            'portero': [],
+            'defensa': [],
+            'centrocampista': [],
+            'delantero': []
+        }
+        
+        for position in ['portero', 'defensa', 'centrocampista', 'delantero']:
+            position_players = team_players[team_players['position'] == position]
+            
+            if position == 'portero':
+                lineup[position] = position_players.head(1).to_dict('records')
+            elif position == 'defensa':
+                lineup[position] = position_players.head(4).to_dict('records')
+            elif position == 'centrocampista':
+                lineup[position] = position_players.head(3).to_dict('records')
+            elif position == 'delantero':
+                lineup[position] = position_players.head(3).to_dict('records')
+        
+        lineups[team] = lineup
+    
+    return lineups, None
 
 st.divider()
 
-# Create tabs for different views
-tab1, tab2 = st.tabs(["🔍 Player Prediction", "🏆 Top 10 Players"])
+tab1, tab2 = st.tabs(["🔍 Player Prediction", "⚽ Team Lineups"])
 
-# TAB 1: Individual Player Prediction
 with tab1:
     st.header("Predict Individual Player Points")
     
@@ -131,7 +141,6 @@ with tab1:
                 else:
                     classification = classify_points(points)
                     
-                    # Display classification with color coding
                     if classification == "high-point-round":
                         st.success(f"### 🔥 HIGH POINT ROUND")
                     elif classification == "medium-point-round":
@@ -139,84 +148,75 @@ with tab1:
                     else:
                         st.warning(f"### 📉 LOW POINT ROUND")
                     
-                    # Show detailed points in expander
-                    with st.expander("📈 See exact predicted points"):
-                        st.metric(label="Predicted Points", value=f"{points:.2f}")
-                    
-                    # Visual progress bar
+                    st.metric(label="Predicted Points", value=f"{points}")
                     st.progress(min(points / 10, 1.0))
 
-# TAB 2: Top 10 Players
 with tab2:
-    st.header("Top 10 Players by Round")
+    st.header("Best Lineup by Team")
     
     col1, col2 = st.columns([1, 3])
     
     with col1:
-        top_round = st.number_input("Select Round", min_value=1, max_value=38, value=1, key="top_round")
+        lineup_round = st.number_input("Select Round", min_value=1, max_value=38, value=1, key="lineup_round")
         
-        if st.button("Get Top 10", type="primary"):
-            with st.spinner("Loading top players..."):
-                top_players, error = get_top_players_for_round(top_round)
+        if st.button("Get Lineups", type="primary"):
+            with st.spinner("Building lineups..."):
+                lineups, error = get_best_lineup_by_team(lineup_round)
                 
                 if error:
                     st.error(f"Error: {error}")
                 else:
-                    if not top_players:
-                        st.info("No players found for this round")
-                    else:
-                        # Store in session state
-                        st.session_state['top_players'] = top_players
-                        st.session_state['display_round'] = top_round
+                    st.session_state['lineups'] = lineups
+                    st.session_state['lineup_round'] = lineup_round
     
-    # Display results
-    if 'top_players' in st.session_state:
+    if 'lineups' in st.session_state:
         with col2:
-            st.subheader(f"Round {st.session_state['display_round']} - Top Performers")
+            st.subheader(f"Round {st.session_state['lineup_round']} - Team Lineups")
             
-            for i, player in enumerate(st.session_state['top_players'], 1):
-                classification = player['classification']
-                points = player['predicted_points']
-                name = player['player_name']
+            team_names = sorted(st.session_state['lineups'].keys())
+            selected_team = st.selectbox("Select Team", team_names)
+            
+            if selected_team:
+                lineup = st.session_state['lineups'][selected_team]
                 
-                # Color coding
-                if classification == "high-point-round":
-                    emoji = "🔥"
-                elif classification == "medium-point-round":
-                    emoji = "📊"
-                else:
-                    emoji = "📉"
-                
-                # Display player card
-                with st.container():
-                    col_rank, col_name, col_class, col_points = st.columns([0.5, 2, 1.5, 1])
-                    
-                    with col_rank:
-                        st.markdown(f"### {i}")
-                    
+                st.markdown("#### 🥅 Goalkeeper (1)")
+                for player in lineup['portero']:
+                    col_name, col_pts = st.columns([3, 1])
                     with col_name:
-                        st.markdown(f"**{name}**")
-                    
-                    with col_class:
-                        if classification == "high-point-round":
-                            st.success(f"{emoji} High")
-                        elif classification == "medium-point-round":
-                            st.info(f"{emoji} Medium")
-                        else:
-                            st.warning(f"{emoji} Low")
-                    
-                    with col_points:
-                        st.metric("Points", f"{points:.1f}")
-                    
-                    st.divider()
-            
-            # Export option
-            if st.button("📥 Export to CSV"):
-                df = pd.DataFrame(st.session_state['top_players'])
-                csv = df.to_csv(index=False)
-                st.download_button(
-                    label="Download CSV",
-                    data=csv,
-                    file_name=f"top_10_round_{st.session_state['display_round']}.csv",
-                    mime="text/csv"
-                )
+                        st.write(f"**{player['player_name']}**")
+                    with col_pts:
+                        st.metric("", f"{player['predicted_points']}")
+                
+                st.divider()
+                
+                st.markdown("#### 🛡️ Defenders (4)")
+                for player in lineup['defensa']:
+                    col_name, col_pts = st.columns([3, 1])
+                    with col_name:
+                        st.write(f"**{player['player_name']}**")
+                    with col_pts:
+                        st.metric("", f"{player['predicted_points']}")
+                
+                st.divider()
+                
+                st.markdown("#### ⚙️ Midfielders (3)")
+                for player in lineup['centrocampista']:
+                    col_name, col_pts = st.columns([3, 1])
+                    with col_name:
+                        st.write(f"**{player['player_name']}**")
+                    with col_pts:
+                        st.metric("", f"{player['predicted_points']}")
+                
+                st.divider()
+                
+                st.markdown("#### ⚡ Forwards (3)")
+                for player in lineup['delantero']:
+                    col_name, col_pts = st.columns([3, 1])
+                    with col_name:
+                        st.write(f"**{player['player_name']}**")
+                    with col_pts:
+                        st.metric("", f"{player['predicted_points']}")
+                
+                total_points = sum(p['predicted_points'] for pos in lineup.values() for p in pos)
+                st.divider()
+                st.metric("**Total Expected Points**", f"{round(total_points, 1)}")
