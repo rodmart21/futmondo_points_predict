@@ -3,6 +3,7 @@ import json
 import pandas as pd
 import numpy as np
 import logging
+import os
 from sqlalchemy import create_engine
 from functions.utils import (
     create_round_features,
@@ -12,11 +13,9 @@ from functions.utils import (
     standardize_team_names,
     predict_upcoming_matches,
     TEAM_ID_MAPPING,
-    TEAM_NAME_MAPPING
-)
+    TEAM_NAME_MAPPING)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
 
 def fetch_championship_players(auth_token, user_id, championship_id):
     """Fetch all players from championship endpoint"""
@@ -66,82 +65,77 @@ def clean_numpy_values(df):
 
 
 def main():
-    # Configuration
     AUTH_TOKEN = '5e65_20f468a19ad19ef73979642df99d6603'
     USER_ID = '56c6b62085617f9b1dc7d061'
     CHAMPIONSHIP_ID = '5f7b19924dcd043e8a092dd4'
     
+    # Connection to database
     db_config = {
         'username': 'rodrigo',
         'host': 'localhost',
         'port': '5432',
-        'database': 'futmondo_full_players_info'
-    }
+        'database': 'futmondo_full_players_info'}
     
-    # Fetch and save player data
+    engine = create_engine(
+        f"postgresql+psycopg2://{db_config['username']}@{db_config['host']}:"
+        f"{db_config['port']}/{db_config['database']}")
+    
+    # Load existing player points data
+    query = "SELECT * FROM player_points"
+    df = pd.read_sql(query, engine)
+    df.shape
+    
+    # 1. Fetch players from the last round. Important to run after the end of the round.
     player_list = fetch_championship_players(AUTH_TOKEN, USER_ID, CHAMPIONSHIP_ID)
     if not player_list:
         logging.error("Failed to fetch player data. Aborting.")
         return
     
-    output_path = '/Users/rodrigo/football-data-analytics/futmondo_points_predict/data/detailed_scrapped/all_detailed_players_def.json'
+    # 2. Create rolling features and update player_points table
+    df_rolling = create_round_features(player_list, target_rounds=[17, 18, 19, 20])
     
-    # Create directory if it doesn't exist
-    import os
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    
-    with open(output_path, 'w', encoding='utf-8') as f:
-        json.dump(player_list, f, indent=2, ensure_ascii=False)
-    logging.info(f"Saved player data to {output_path}")
-    
-    # Create rolling features
-    df_rolling = create_round_features(output_path, target_rounds=[14, 15, 16, 17])
-    
-    # Remove specific team IDs
+    # Clean specific IDs
     ids_to_remove = ['51ffb6b7113981890700003a', '5211d81592d57d145a0000ce', '520e4ee4a776cc826b00004b']
     df_rolling = df_rolling[~df_rolling['team_id'].isin(ids_to_remove)]
-    
-    # Map team IDs to team names
     df_rolling['team'] = df_rolling['team_id'].map(TEAM_ID_MAPPING)
+
+    # Include new round values: 2 per round (those round values and next one with target_points=nan)
+    try:
+        final_df = pd.concat([df, df_rolling], ignore_index=True)
+        final_df = final_df.drop_duplicates(subset=['round', 'name'], keep='first')
+        final_df['target_points'] = final_df.groupby('player_id')['match_minus_1'].shift(-1)  # Update target points
+    except:
+        final_df = df_rolling
     
-    # Connect to database
-    engine = create_engine(
-        f"postgresql+psycopg2://{db_config['username']}@{db_config['host']}:"
-        f"{db_config['port']}/{db_config['database']}"
-    )
-    
-    # Save player points
-    df_rolling.to_sql('player_points', engine, if_exists='replace', index=False)
+    # Save updated player points data
+    final_df.to_sql('player_points', engine, if_exists='replace', index=False)
     logging.info("Saved player_points to database")
     
-    # Load historical match data
-    df_la_liga = pd.read_sql("SELECT * FROM la_liga_matches", engine)
+    # 3. Load matches data and predict upcoming matches
+    df_la_liga = pd.read_sql("SELECT * FROM la_liga_matches", engine) # Data with probabilities
     df_liga_next = pd.read_csv('/Users/rodrigo/football-data-analytics/futmondo_points_predict/data/la_liga_next_rounds.csv')
     
-    # Standardize team names
+    # Clean and standardize team names
     df_la_liga = standardize_team_names(df_la_liga, is_historical=True)
     df_liga_next = standardize_team_names(df_liga_next, is_historical=False)
     
-    # Check for team name mismatches
     historical_teams = set(df_la_liga['HomeTeam'].unique()) | set(df_la_liga['AwayTeam'].unique())
     upcoming_teams = set(df_liga_next['Home Team'].unique()) | set(df_liga_next['Away Team'].unique())
     missing_teams = upcoming_teams - historical_teams
+
     if missing_teams:
         logging.warning(f"Teams in upcoming matches not found in historical data: {missing_teams}")
     
-    # Predict upcoming matches
     team_stats = get_team_stats(df_la_liga)
     predictions_df = predict_upcoming_matches(df_liga_next, df_la_liga, team_stats)
+    updated_df = pd.concat([df_la_liga, predictions_df], ignore_index=True)  # combine historical and predicted matches
     
-    # Combine historical and predicted data
-    updated_df = pd.concat([df_la_liga, predictions_df], ignore_index=True)
-    
-    # Add matchup probabilities and create advanced features
-    df_with_matchups = add_matchup_probabilities(df_rolling, updated_df)
+    # 4. Add matchup probabilities and create advanced features
+    df_with_matchups = add_matchup_probabilities(final_df, updated_df)
     df_enriched = create_advanced_features(df_with_matchups)
     df_enriched = clean_numpy_values(df_enriched)
     
-    # Save enriched training data
+    # 5. Save enriched training data
     df_enriched.to_sql('full_training_data', engine, if_exists='replace', index=False)
     logging.info("Saved full_training_data to database")
     logging.info("Database update completed successfully")

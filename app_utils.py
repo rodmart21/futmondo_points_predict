@@ -105,6 +105,7 @@ def get_all_players_for_round(round_num: int) -> dict:
         query = """
             SELECT
             name,
+            role,
             home_average,
             away_average,
             overall_average,
@@ -132,6 +133,7 @@ def get_all_players_for_round(round_num: int) -> dict:
             portero_matchup_bonus,
             home_matchup_boost,
             difficult_matchup,
+            team,
             easy_matchup
             FROM full_training_data
             WHERE round = %s

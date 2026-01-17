@@ -211,3 +211,6 @@ __marimo__/
 *.json
 *.csv
 *.png
+
+# Ignore jupyter notebooks
+*.ipynb
