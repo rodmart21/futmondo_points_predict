@@ -4,5 +4,3 @@ joblib
 scikit-learn
 numpy
 psycopg2-binary
-# Add any other packages that training_database.py uses
-# For example, if you use SQLite, MySQL, PostgreSQL, etc.

@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import joblib
-from app_utils import get_player_features, get_all_players_for_round
+from src.app_utils import get_player_features, get_all_players_for_round
 
 st.set_page_config(page_title="Fantasy Points Predictor", page_icon="⚽", layout="wide")
 

@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import joblib
 import pandas as pd
-from app_utils import get_player_features, get_all_players_for_round
+from src.app_utils import get_player_features, get_all_players_for_round
 
 app = FastAPI(title="Fantasy Points Predictor")
 
