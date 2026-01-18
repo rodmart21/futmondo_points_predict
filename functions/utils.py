@@ -365,7 +365,7 @@ def extract_individual_player_features(json_data):
     }
 
 
-def create_round_features(json_file_path, target_rounds, lookback_window=2):
+def create_round_features(players_list, target_rounds, lookback_window=2):
     """
     Create rolling features for specified rounds from player data.
     
@@ -390,17 +390,10 @@ def create_round_features(json_file_path, target_rounds, lookback_window=2):
     Returns:
     - DataFrame with rolling features
     """
-    
-    # Load and flatten player data
-    with open(json_file_path, 'r', encoding='utf-8') as f:
-        players_data = json.load(f)
-    
-    if not isinstance(players_data, list):
-        players_data = [players_data]
-    
+
     # Flatten nested dictionaries
     flattened = []
-    for player in players_data:
+    for player in players_list:
         flat = {k: v for k, v in player.items() 
                 if k not in ['userteamId', 'userteam', 'userteamSlug']}
         
