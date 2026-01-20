@@ -106,6 +106,7 @@ def get_all_players_for_round(round_num: int) -> dict:
             SELECT
             name,
             role,
+            rating,
             home_average,
             away_average,
             overall_average,
