@@ -5,7 +5,7 @@ import hashlib
 from sqlalchemy import create_engine, text
 from datetime import datetime
 import logging
-from functions.utils import extract_individual_player_features
+from src.utils import extract_individual_player_features
 
 # Set up logging
 logging.basicConfig(

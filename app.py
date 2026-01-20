@@ -102,7 +102,7 @@ def get_team_lineup(team: str, round_num: int):
             
             predictions.append({
                 "player_name": player_name,
-                "position": features_dict.get('position', 'Unknown'),
+                "position": features_dict.get('role', 'Unknown'),
                 "predicted_points": round(float(prediction), 1)
             })
         except Exception:
@@ -124,7 +124,7 @@ def get_team_lineup(team: str, round_num: int):
     }
     
     for position in ['portero', 'defensa', 'centrocampista', 'delantero']:
-        position_players = df[df['position'] == position]
+        position_players = df[df['role'] == position]
         
         if position == 'portero':
             lineup[position] = position_players.head(1).to_dict('records')
