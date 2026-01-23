@@ -92,7 +92,7 @@ def main():
         return
     
     # 2. Create rolling features and update player_points table
-    df_rolling = create_round_features(player_list, target_rounds=[17, 18, 19, 20])
+    df_rolling = create_round_features(player_list, target_rounds=[18, 19, 20, 21])
     
     # Clean specific IDs
     ids_to_remove = ['51ffb6b7113981890700003a', '5211d81592d57d145a0000ce', '520e4ee4a776cc826b00004b']
@@ -102,7 +102,7 @@ def main():
     # Include new round values: 2 per round (those round values and next one with target_points=nan)
     try:
         final_df = pd.concat([df, df_rolling], ignore_index=True)
-        final_df = final_df.drop_duplicates(subset=['round', 'name'], keep='first')
+        final_df = final_df.drop_duplicates(subset=['round', 'name'], keep='last')
         final_df['target_points'] = final_df.groupby('player_id')['match_minus_1'].shift(-1)  # Update target points
     except:
         final_df = df_rolling
@@ -113,7 +113,7 @@ def main():
     
     # 3. Load matches data and predict upcoming matches
     df_la_liga = pd.read_sql("SELECT * FROM la_liga_matches", engine) # Data with probabilities
-    df_liga_next = pd.read_csv('/Users/rodrigo/football-data-analytics/futmondo_points_predict/data/la_liga_next_rounds.csv')
+    df_liga_next = pd.read_csv('/Users/rodrigo/football-data-analytics/futmondo_points_predict/data/la_liga_next_rounds copy.csv')
     
     # Clean and standardize team names
     df_la_liga = standardize_team_names(df_la_liga, is_historical=True)
