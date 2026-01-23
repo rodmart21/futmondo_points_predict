@@ -46,6 +46,7 @@ def get_player_features(player_name: str, round_number: int):
         overall_average,
         last_2_average,
         current_price,
+        rating,
         is_home,
         match_minus_1,
         match_minus_2,
