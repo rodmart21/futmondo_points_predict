@@ -46,7 +46,7 @@ def predict_player_points(player_name: str, round_num: int):
         return None, "Missing required features for prediction"
     
     features_scaled = MODEL['scaler'].transform(features_df)
-    prediction = MODEL['model'].predict(features_scaled)[0]
+    prediction = MODEL['model'].predict(features_scaled)[0] - 10
     
     return round(float(prediction), 1), None
 
@@ -77,7 +77,7 @@ def get_team_lineup(team: str, round_num: int):
                 continue
             
             features_scaled = MODEL['scaler'].transform(features_df)
-            prediction = MODEL['model'].predict(features_scaled)[0]
+            prediction = MODEL['model'].predict(features_scaled)[0] - 10
             
             predictions.append({
                 "player_name": player_name,

@@ -58,7 +58,7 @@ def predict_points(request: PredictionRequest):
         )
     
     features_scaled = MODEL['scaler'].transform(features_df)
-    prediction = MODEL['model'].predict(features_scaled)[0]
+    prediction = MODEL['model'].predict(features_scaled)[0] - 10
     
     return PredictionResponse(
         player_name=request.player_name,
@@ -98,7 +98,7 @@ def get_team_lineup(team: str, round_num: int):
                 continue
             
             features_scaled = MODEL['scaler'].transform(features_df)
-            prediction = MODEL['model'].predict(features_scaled)[0]
+            prediction = MODEL['model'].predict(features_scaled)[0] - 10
             
             predictions.append({
                 "player_name": player_name,
