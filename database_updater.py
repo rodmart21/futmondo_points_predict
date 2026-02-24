@@ -81,7 +81,7 @@ def main():
         f"{db_config['port']}/{db_config['database']}")
     
     # Load existing player points data
-    query = "SELECT * FROM player_points"
+    query = "SELECT * FROM player_points_def"  # Use player_points_def, single player_points is 
     df = pd.read_sql(query, engine)
     df.shape
     
