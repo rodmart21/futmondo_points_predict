@@ -1,6 +1,7 @@
 streamlit
 pandas
 joblib
-scikit-learn
 numpy
 psycopg2-binary
+scikit-learn==1.7.2
+lightgbm
