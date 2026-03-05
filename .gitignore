@@ -213,4 +213,4 @@ __marimo__/
 *.png
 
 # Ignore jupyter notebooks
-*.ipynb
+# *.ipynb
